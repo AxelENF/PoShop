@@ -1,0 +1,218 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* TEMA CLARO POR DEFECTO (Elegancia formal y contraste absoluto) */
+:root {
+  --background: #ffffff;
+  --foreground: #0f172a; /* Slate 900 */
+  --card: #f8fafc; /* Slate 50 */
+  --card-foreground: #0f172a;
+  --card-border: #e2e8f0; /* Slate 200 */
+  --primary: #1e40af; /* Blue 800 - Formal Royal Blue */
+  --primary-foreground: #ffffff;
+  --primary-hover: #1e3a8a;
+  --muted: #475569; /* Slate 600 */
+  --muted-background: #f1f5f9; /* Slate 100 */
+  --accent: #d97706; /* Amber 600 - Alert/Accent */
+  --success: #15803d; /* Green 700 */
+  --success-background: #dcfce7;
+  --error: #b91c1c; /* Red 700 */
+  --error-background: #fee2e2;
+  --input: #cbd5e1; /* Slate 300 */
+  --input-focus: #1e40af;
+}
+
+/* TEMA OSCURO (Zinc Obsidian de alto contraste) */
+[data-theme="dark"] {
+  --background: #09090b; /* Zinc 950 */
+  --foreground: #f4f4f5; /* Zinc 100 */
+  --card: #18181b; /* Zinc 900 */
+  --card-foreground: #f4f4f5;
+  --card-border: #27272a; /* Zinc 800 */
+  --primary: #3b82f6; /* Blue 500 */
+  --primary-foreground: #ffffff;
+  --primary-hover: #2563eb;
+  --muted: #a1a1aa; /* Zinc 400 */
+  --muted-background: #27272a; /* Zinc 800 */
+  --accent: #f59e0b; /* Amber 500 */
+  --success: #22c55e; /* Green 500 */
+  --success-background: #14532d;
+  --error: #ef4444; /* Red 500 */
+  --error-background: #7f1d1d;
+  --input: #3f3f46; /* Zinc 700 */
+  --input-focus: #3b82f6;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-jakarta), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  overflow-x: hidden;
+  line-height: 1.5;
+}
+
+/* Scrollbars formales */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--card-border);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--muted);
+}
+
+/* ── 3. CLASES DE DISEÑO PREMIUM (GLASSMORPHISM & GLOWS) ───────────────── */
+
+.glass-card {
+  background-color: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: 1rem;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.02);
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+[data-theme="dark"] .glass-card {
+  background: rgba(24, 24, 27, 0.65);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+.glass-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--primary);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.05);
+}
+
+[data-theme="dark"] .glass-card:hover {
+  box-shadow: 0 12px 40px rgba(59, 130, 246, 0.12);
+}
+
+.gradient-aura {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 100%;
+  max-width: 1200px;
+  height: 400px;
+  background: radial-gradient(ellipse at top, rgba(30, 64, 175, 0.08), transparent 60%);
+  z-index: 0;
+  pointer-events: none;
+}
+
+[data-theme="dark"] .gradient-aura {
+  background: radial-gradient(ellipse at top, rgba(59, 130, 246, 0.14), transparent 65%);
+}
+
+.glow-btn-primary {
+  background-color: var(--primary);
+  color: var(--primary-foreground);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  font-weight: 700;
+  letter-spacing: 0.025em;
+  text-transform: uppercase;
+}
+
+.glow-btn-primary:hover {
+  background-color: var(--primary-hover);
+  box-shadow: 0 0 16px rgba(59, 130, 246, 0.4);
+  transform: translateY(-1px);
+}
+
+.glow-btn-primary:active {
+  transform: translateY(0);
+}
+
+/* ── 4. BOTONES PRESTABLECIDOS CON CONTRASTE ABSOLUTO ──────────────────── */
+
+.btn-primary {
+  background-color: var(--primary) !important;
+  color: #ffffff !important;
+  border: 1px solid transparent !important;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  font-weight: 700;
+}
+
+.btn-primary:hover {
+  opacity: 0.9;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.2);
+}
+
+.btn-secondary {
+  background-color: var(--muted-background) !important;
+  color: var(--foreground) !important;
+  border: 1px solid var(--card-border) !important;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  font-weight: 700;
+}
+
+.btn-secondary:hover {
+  background-color: var(--card-border) !important;
+  transform: translateY(-1px);
+}
+
+.btn-danger {
+  background-color: var(--error) !important;
+  color: #ffffff !important;
+  border: 1px solid transparent !important;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  font-weight: 700;
+}
+
+.btn-danger:hover {
+  opacity: 0.95;
+  transform: translateY(-1px);
+}
+
+.btn-success {
+  background-color: var(--success) !important;
+  color: #ffffff !important;
+  border: 1px solid transparent !important;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  font-weight: 700;
+}
+
+.btn-success:hover {
+  opacity: 0.95;
+  transform: translateY(-1px);
+}
+
+/* ── 5. MEDIA QUERY IMPRESIÓN (PDF & TICKET FISCO) ─────────────────────── */
+
+@media print {
+  body {
+    background: #ffffff !important;
+    color: #000000 !important;
+  }
+  .no-print {
+    display: none !important;
+  }
+  .print-only {
+    display: block !important;
+  }
+  .print-card {
+    border: 1px solid #000000 !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    box-shadow: none !important;
+  }
+}
+
+
