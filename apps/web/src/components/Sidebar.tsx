@@ -137,10 +137,10 @@ export default function Sidebar({ onTriggerAction }: { onTriggerAction?: (action
       <div className="p-4 border-t border-slate-200 bg-slate-50 flex flex-col gap-2">
         <div className="flex items-center gap-2">
           <div className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center font-bold text-slate-700 text-xs uppercase">
-            {session.username.substring(0, 2)}
+            {session.name.substring(0, 2)}
           </div>
           <div className="flex flex-col">
-            <span className="text-[11px] font-bold text-slate-800 leading-tight">{session.username.toUpperCase()}</span>
+            <span className="text-[11px] font-bold text-slate-800 leading-tight">{session.name.toUpperCase()}</span>
             <span className="text-[9px] text-slate-500 font-medium uppercase tracking-wider">{session.role}</span>
           </div>
         </div>
