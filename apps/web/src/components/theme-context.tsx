@@ -12,6 +12,8 @@ interface ThemeContextType {
   setAdminPin: (pin: string) => void;
   isSidebarCollapsed: boolean;
   setIsSidebarCollapsed: (collapsed: boolean) => void;
+  isAdminUnlocked: boolean;
+  setIsAdminUnlocked: (unlocked: boolean) => void;
 }
 
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
@@ -20,6 +22,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const [activeBranch, setActiveBranch] = useState('Sucursal Matriz');
   const [adminPin, setAdminPin] = useState('9999');
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [isAdminUnlocked, setIsAdminUnlocked] = useState(false);
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -68,7 +71,9 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
       adminPin, 
       setAdminPin: handleSetPin,
       isSidebarCollapsed,
-      setIsSidebarCollapsed: handleSetCollapsed
+      setIsSidebarCollapsed: handleSetCollapsed,
+      isAdminUnlocked,
+      setIsAdminUnlocked
     }}>
       {children}
     </ThemeContext.Provider>
