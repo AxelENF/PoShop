@@ -4,23 +4,23 @@
 
 /* TEMA CLARO POR DEFECTO (Elegancia formal y contraste absoluto) */
 :root {
-  --background: #ffffff;
+  --background: #f8fafc; /* Slate 50 - Sleek bright backdrop */
   --foreground: #0f172a; /* Slate 900 */
-  --card: #f8fafc; /* Slate 50 */
+  --card: #ffffff; /* pure white cards */
   --card-foreground: #0f172a;
   --card-border: #e2e8f0; /* Slate 200 */
-  --primary: #1e40af; /* Blue 800 - Formal Royal Blue */
+  --primary: #0066FF; /* Electric Blue Accent */
   --primary-foreground: #ffffff;
-  --primary-hover: #1e3a8a;
+  --primary-hover: #0052cc;
   --muted: #475569; /* Slate 600 */
   --muted-background: #f1f5f9; /* Slate 100 */
-  --accent: #d97706; /* Amber 600 - Alert/Accent */
+  --accent: #FF5500; /* Electric Orange Accent */
   --success: #15803d; /* Green 700 */
   --success-background: #dcfce7;
   --error: #b91c1c; /* Red 700 */
   --error-background: #fee2e2;
   --input: #cbd5e1; /* Slate 300 */
-  --input-focus: #1e40af;
+  --input-focus: #0066FF;
 }
 
 /* TEMA OSCURO (Zinc Obsidian de alto contraste) */
