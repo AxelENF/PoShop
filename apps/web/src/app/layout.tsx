@@ -16,6 +16,7 @@ export const metadata: Metadata = {
 import { TRPCProvider } from '../utils/trpc/Provider';
 import { UserSessionProvider } from '../lib/user-session';
 import { ShiftProvider } from '../lib/shift-context';
+import { ThemeProvider } from '../components/theme-context';
 
 export default function RootLayout({
   children,
@@ -30,8 +31,7 @@ export default function RootLayout({
             __html: `
               (function() {
                 try {
-                  var saved = localStorage.getItem('snapgad_theme') || 'dark';
-                  document.documentElement.setAttribute('data-theme', saved);
+                  document.documentElement.setAttribute('data-theme', 'light');
                 } catch (e) {}
               })();
             `,
@@ -42,7 +42,9 @@ export default function RootLayout({
         <TRPCProvider>
           <UserSessionProvider>
             <ShiftProvider>
-              {children}
+              <ThemeProvider>
+                {children}
+              </ThemeProvider>
             </ShiftProvider>
           </UserSessionProvider>
         </TRPCProvider>
