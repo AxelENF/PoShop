@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '../../utils/supabase/client';
+import { trpc } from '../../utils/trpc/client';
 
 type LoginMethod = 'password' | 'magic-link';
 
@@ -32,6 +33,9 @@ export default function LoginPage() {
     return () => clearInterval(interval);
   }, []);
 
+  // Instanciar mutation de tRPC para auto-confirmar email
+  const autoConfirmMutation = trpc.auth.autoConfirmUser.useMutation();
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
@@ -51,15 +55,32 @@ export default function LoginPage() {
       const supabase = createClient();
 
       if (loginMethod === 'password') {
-        const { error: authError } = await supabase.auth.signInWithPassword({
+        let { error: authError, data } = await supabase.auth.signInWithPassword({
           email: email.trim().toLowerCase(),
           password,
         });
 
+        // 💡 Si el correo no está confirmado, ¡lo auto-confirmamos usando nuestra API del servidor!
+        if (authError && authError.message === 'Email not confirmed') {
+          try {
+            await autoConfirmMutation.mutateAsync({ email: email.trim().toLowerCase() });
+            
+            // Intentar login de nuevo ya confirmado
+            const retry = await supabase.auth.signInWithPassword({
+              email: email.trim().toLowerCase(),
+              password,
+            });
+            authError = retry.error;
+          } catch (confirmErr: any) {
+            setError(confirmErr.message || 'No se pudo confirmar tu correo de forma automática.');
+            setIsLoading(false);
+            return;
+          }
+        }
+
         if (authError) {
           const errorMessages: Record<string, string> = {
             'Invalid login credentials': 'Credenciales incorrectas. Verifica tu correo y contraseña.',
-            'Email not confirmed': 'El correo de esta cuenta no ha sido confirmado. Puedes usar Magic Link para entrar sin contraseña.',
             'Too many requests': 'Demasiados intentos. Espera unos minutos antes de reintentar.',
           };
           setError(errorMessages[authError.message] || authError.message);
