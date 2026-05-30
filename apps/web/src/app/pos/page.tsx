@@ -8,6 +8,10 @@ import { useUserSession } from '../../lib/user-session';
 import { SoundFx } from '../../lib/pos-utils';
 import { saveCatalogLocal, getLocalProducts, saveOfflineSale, getPendingSales, deletePendingSale } from '../../lib/offlineDb';
 
+import { useAppTheme } from '../../components/theme-context';
+import Sidebar from '../../components/Sidebar';
+import AdminPinModal from '../../components/AdminPinModal';
+
 interface CartItem {
   product: ProductSeed;
   quantity: number;
@@ -20,7 +24,11 @@ export default function POSPage() {
   const { session, setRoleForDev } = useUserSession();
   const { activeShift, closeShift, recordSale, elapsedTime } = useShift();
 
-  const [theme, setTheme] = useState<'light' | 'dark'>('dark');
+  const { theme, activeBranch } = useAppTheme();
+  const [isAdminPinOpen, setIsAdminPinOpen] = useState(false);
+  const [pinTargetAction, setPinTargetAction] = useState<string | null>(null);
+  const [pinSuccessCallback, setPinSuccessCallback] = useState<(() => void) | null>(null);
+
   const [activeProfile, setActiveProfile] = useState<'general' | 'weight' | 'catalog' | 'distribution' | 'services'>('general');
   const [priceTier, setPriceTier] = useState<'retail' | 'contractor' | 'wholesale'>('retail');
   
@@ -114,13 +122,23 @@ export default function POSPage() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // Sincronizar tema con localStorage y DOM
+  // Inicializar existencias distribuidas por sucursal en el catálogo semilla y forzar tema claro
   useEffect(() => {
+    PRODUCTS_SEED.forEach(p => {
+      if (!p.stockPerBranch) {
+        p.stockPerBranch = {
+          'Sucursal Matriz': p.stock,
+          'Sucursal Poniente': Math.max(0, Math.floor(p.stock / 2))
+        };
+      }
+    });
+
     if (typeof window !== 'undefined') {
-      document.documentElement.setAttribute('data-theme', theme);
-      window.localStorage.setItem('snapgad_theme', theme);
+      document.documentElement.setAttribute('data-theme', 'light');
+      document.documentElement.classList.remove('dark');
+      window.localStorage.setItem('snapgad_theme', 'light');
     }
-  }, [theme]);
+  }, []);
 
   // Controladores de Tour Guiado
   const closeTour = () => {
@@ -178,11 +196,6 @@ export default function POSPage() {
       } else {
         setSelectedCustomer(loadedCustomers[0]);
       }
-      const savedTheme = window.localStorage.getItem('snapgad_theme') as 'light' | 'dark';
-      if (savedTheme) {
-        setTheme(savedTheme);
-      }
-      
       const tenantConfig = window.localStorage.getItem('snapgad_tenant_config');
       if (tenantConfig) {
         try {
@@ -369,13 +382,7 @@ export default function POSPage() {
     return () => clearInterval(interval);
   }, []);
 
-  // Sincronizar Tema con HTML
-  useEffect(() => {
-    document.documentElement.setAttribute('data-theme', theme);
-    if (typeof window !== 'undefined') {
-      window.localStorage.setItem('snapgad_pos_theme', theme);
-    }
-  }, [theme]);
+
 
   // Enfocar buscador al cargar
   useEffect(() => {
@@ -818,8 +825,11 @@ export default function POSPage() {
       cart.forEach((item) => {
         const prod = PRODUCTS_SEED.find((p) => p.id === item.product.id);
         if (prod) {
-          // Descontar stock general
+          // Descontar stock general y stock de la sucursal activa
           prod.stock = Math.max(0, prod.stock - item.quantity);
+          if (prod.stockPerBranch) {
+            prod.stockPerBranch[activeBranch] = Math.max(0, (prod.stockPerBranch[activeBranch] || 0) - item.quantity);
+          }
 
           // Si el producto rastrea caducidad y tiene lotes
           if (prod.trackExpiry && prod.expirationBatch && prod.expirationBatch.length > 0) {
@@ -1074,131 +1084,93 @@ export default function POSPage() {
   }
 
   return (
-    <div className="min-h-screen flex flex-col" style={{ backgroundColor: 'var(--background)', color: 'var(--foreground)' }}>
+    <div className="min-h-screen flex bg-slate-50 text-slate-900 font-sans">
       
-      {/* 1. Cabecera Operativa Principal */}
-      <header className="px-6 py-4 flex justify-between items-center border-b" style={{ borderColor: 'var(--card-border)' }}>
-        <div className="flex items-center gap-6">
+      {/* 1. Barra de Navegación Lateral (Sidebar) */}
+      <Sidebar onTriggerAction={(path) => {
+        setPinTargetAction(path);
+        setPinSuccessCallback(null);
+        setIsAdminPinOpen(true);
+      }} />
+
+      {/* Contenedor del Cuerpo Principal del POS */}
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+        
+        {/* Cabecera Operativa Principal */}
+        <header className="px-6 py-4 flex justify-between items-center border-b border-slate-200 bg-white shrink-0 shadow-sm">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-blue-700 flex items-center justify-center font-bold text-white text-md">
-              S
-            </div>
-            <div>
-              <span className="font-bold text-lg tracking-tight">SNAPGAD</span>
-              <span className="text-xs ml-2 text-zinc-500 border-l pl-2 border-zinc-300 dark:border-zinc-800">
-                POS TERM &middot; {session.branchName}
+            <h1 className="font-extrabold text-slate-800 text-lg tracking-tight">Caja Registradora</h1>
+            <span className="text-[10px] ml-1 bg-blue-100 border border-blue-200 text-blue-700 px-2 py-0.5 rounded-full font-bold uppercase tracking-wider">
+              {activeBranch}
+            </span>
+          </div>
+
+          {/* Info del Turno, Reloj e Interruptor de Cierre */}
+          <div className="flex items-center gap-4">
+            
+            {/* Indicador Neon de Estado de Conexión */}
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50">
+              <span className={`w-2 h-2 rounded-full ${isOnline ? 'bg-emerald-500 shadow-[0_0_6px_#10b981]' : 'bg-amber-500 shadow-[0_0_6px_#f59e0b] animate-pulse'}`} />
+              <span className="text-[10px] font-extrabold uppercase tracking-widest text-slate-500">
+                {isOnline ? 'En Línea' : 'Offline'}
               </span>
             </div>
+
+            {/* Indicador de Perfil Comercial Activo */}
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-blue-100 text-[10px] font-extrabold uppercase tracking-widest bg-blue-50 text-blue-700">
+              <span>
+                {activeProfile === 'general' && '🛍️ TIENDA GENERAL'}
+                {activeProfile === 'weight' && '🥩 PESO Y GRANEL'}
+                {activeProfile === 'catalog' && '🔧 CATÁLOGO ESPECIALIZADO'}
+                {activeProfile === 'distribution' && '🚚 DISTRIBUCIÓN B2B'}
+                {activeProfile === 'services' && '✂️ SERVICIOS'}
+              </span>
+            </div>
+
+            {/* Muestra selector de rol para DEV únicamente */}
+            <div className="flex gap-1 border border-slate-200 p-1 rounded-lg bg-slate-50">
+              {(['cashier', 'admin', 'owner'] as const).map((r) => (
+                <button
+                  key={r}
+                  onClick={() => setRoleForDev(r)}
+                  className="px-2 py-1 text-[10px] font-bold rounded transition-all"
+                  style={{
+                    backgroundColor: session.role === r ? '#0066FF' : 'transparent',
+                    color: session.role === r ? '#ffffff' : '#64748B'
+                  }}
+                >
+                  {r.toUpperCase()}
+                </button>
+              ))}
+            </div>
+
+            <div className="text-xs font-mono text-slate-500 font-bold">
+              TURNO: <span className="font-extrabold text-blue-600">{elapsedTime}</span>
+            </div>
+
+            <div className="flex items-center gap-2 text-xs font-semibold px-2.5 py-1 rounded bg-emerald-50 border border-emerald-100 text-emerald-700">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+              {activeShift.cashierName}
+            </div>
+
+            <button
+              onClick={() => {
+                SoundFx.playBeep();
+                setPinSuccessCallback(() => () => setIsCierreModalOpen(true));
+                setIsAdminPinOpen(true);
+              }}
+              className="px-3 py-1.5 rounded bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 text-xs font-extrabold transition-all uppercase tracking-wider"
+            >
+              CERRAR CAJA
+            </button>
           </div>
+        </header>
 
-          {/* Menú de Navegación según Rol */}
-          <nav className="hidden md:flex gap-4 text-xs font-bold uppercase tracking-wider">
-            <span className="text-blue-700 dark:text-blue-400 border-b-2 border-blue-700 pb-4 mt-1">Caja POS</span>
-            
-            {session.permissions.canViewCostPrices && (
-              <button 
-                onClick={() => router.push('/inventario')}
-                className="text-zinc-400 hover:text-zinc-100 transition-colors pb-4 mt-1"
-              >
-                Inventario
-              </button>
-            )}
-
-            {session.role === 'admin' || session.role === 'owner' ? (
-              <button 
-                onClick={() => router.push('/clientes')}
-                className="text-zinc-400 hover:text-zinc-100 transition-colors pb-4 mt-1"
-              >
-                Clientes
-              </button>
-            ) : null}
-
-            {session.role === 'owner' && (
-              <button 
-                onClick={() => router.push('/ajustes')}
-                className="text-zinc-400 hover:text-zinc-100 transition-colors pb-4 mt-1"
-              >
-                Ajustes
-              </button>
-            )}
-          </nav>
-        </div>
-
-        {/* Info del Turno, Reloj e Interruptor de Cierre */}
-        <div className="flex items-center gap-6">
+        {/* 2. Cuerpo del POS (Grid de Layout) */}
+        <div className="flex-grow grid grid-cols-12 overflow-hidden bg-slate-50">
           
-          {/* Indicador Neon de Estado de Conexión */}
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg border bg-zinc-950/60" style={{ borderColor: 'var(--card-border)' }}>
-            <span className={`w-2 h-2 rounded-full ${isOnline ? 'bg-emerald-500 shadow-[0_0_8px_#10b981]' : 'bg-amber-500 shadow-[0_0_8px_#f59e0b] animate-pulse'}`} />
-            <span className="text-[10px] font-extrabold uppercase tracking-widest text-zinc-400">
-              {isOnline ? '📶 En Línea' : '⚠️ Offline'}
-            </span>
-          </div>
-
-          {/* Indicador de Perfil Comercial Activo */}
-          <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-[10px] font-extrabold uppercase tracking-widest bg-zinc-950/60 ${
-            activeProfile === 'general' ? 'border-blue-500/30 text-blue-400' :
-            activeProfile === 'weight' ? 'border-amber-500/30 text-amber-400 animate-pulse' :
-            activeProfile === 'catalog' ? 'border-purple-500/30 text-purple-400' :
-            activeProfile === 'distribution' ? 'border-cyan-500/30 text-cyan-400' :
-            'border-emerald-500/30 text-emerald-400'
-          }`}>
-            <span>
-              {activeProfile === 'general' && '🛍️ TIENDA GENERAL'}
-              {activeProfile === 'weight' && '🥩 PESO Y GRANEL'}
-              {activeProfile === 'catalog' && '🔧 CATÁLOGO ESPECIALIZADO'}
-              {activeProfile === 'distribution' && '🚚 DISTRIBUCIÓN B2B'}
-              {activeProfile === 'services' && '✂️ SERVICIOS'}
-            </span>
-          </div>
-
-          {/* Muestra selector de rol para DEV únicamente */}
-          <div className="flex gap-1 border p-1 rounded-lg" style={{ borderColor: 'var(--card-border)' }}>
-            {(['cashier', 'admin', 'owner'] as const).map((r) => (
-              <button
-                key={r}
-                onClick={() => setRoleForDev(r)}
-                className="px-2 py-1 text-[10px] font-bold rounded transition-all"
-                style={{
-                  backgroundColor: session.role === r ? 'var(--primary)' : 'transparent',
-                  color: session.role === r ? '#ffffff' : 'var(--muted)'
-                }}
-              >
-                {r.toUpperCase()}
-              </button>
-            ))}
-          </div>
-
-          <button
-            onClick={() => setTheme((prev) => (prev === 'light' ? 'dark' : 'light'))}
-            className="btn-secondary px-2.5 py-1.5 rounded-lg text-[10px] flex items-center gap-1 cursor-pointer font-bold"
-          >
-            {theme === 'light' ? '🌙 OSCURO' : '☀️ CLARO'}
-          </button>
-
-          <div className="text-xs font-mono" style={{ color: 'var(--muted)' }}>
-            TURNO ACTIVO: <span className="font-bold text-blue-700 dark:text-blue-400">{elapsedTime}</span>
-          </div>
-
-          <div className="flex items-center gap-2 text-xs font-semibold px-2.5 py-1 rounded border" style={{ backgroundColor: 'var(--success-background)', color: 'var(--success)', borderColor: 'var(--card-border)' }}>
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-            {activeShift.cashierName} (Caja 1)
-          </div>
-
-          <button
-            onClick={() => setIsCierreModalOpen(true)}
-            className="px-3 py-1.5 rounded bg-red-600/10 hover:bg-red-600 text-red-500 hover:text-white border border-red-500/20 text-xs font-bold transition-all"
-          >
-            CERRAR CAJA
-          </button>
-        </div>
-      </header>
-
-      {/* 2. Cuerpo del POS (Grid de Layout) */}
-      <div className="flex-grow grid grid-cols-12 overflow-hidden">
-        
-        {/* COLUMNA IZQUIERDA: Catálogo de lookup y Favoritos (7/12 cols) */}
-        <div className="col-span-7 p-6 border-r flex flex-col h-[calc(100vh-73px)]" style={{ borderColor: 'var(--card-border)' }}>
+          {/* COLUMNA IZQUIERDA: Catálogo de lookup y Favoritos (7/12 cols) */}
+          <div className="col-span-7 p-6 border-r border-slate-200 flex flex-col h-[calc(100vh-67px)]">
           
           {/* Barra de Filtros de Catálogo */}
           <div className="flex gap-4 mb-4">
@@ -1299,39 +1271,59 @@ export default function POSPage() {
 
           {/* Grid de Productos */}
           <div className="flex-grow overflow-y-auto grid grid-cols-3 gap-3 pr-1">
-            {filteredProducts.map((product) => (
-              <div
-                key={product.id}
-                onClick={() => addToCart(product)}
-                id={product.unit === 'kg' ? 'pos-scale-trigger' : undefined}
-                className="p-4 rounded-xl border hover:shadow-md cursor-pointer transition-all flex flex-col justify-between group hover:border-blue-500/40"
-                style={{ 
-                  backgroundColor: 'var(--card)', 
-                  borderColor: 'var(--card-border)' 
-                }}
-              >
-                <div>
-                  <div className="flex justify-between items-start gap-2 mb-1.5">
-                    <span className="text-[9px] font-bold text-zinc-400 dark:text-zinc-500 uppercase tracking-widest font-mono">
-                      {product.internalCode || 'GRANEL'}
+            {filteredProducts.map((product) => {
+              const sucursalStock = product.stockPerBranch?.[activeBranch] ?? product.stock;
+              const isOutOfStock = sucursalStock <= 0;
+
+              return (
+                <div
+                  key={product.id}
+                  onClick={() => {
+                    if (isOutOfStock) {
+                      SoundFx.playWarning();
+                      return;
+                    }
+                    addToCart(product);
+                  }}
+                  id={product.unit === 'kg' ? 'pos-scale-trigger' : undefined}
+                  className={`p-4 rounded-xl border hover:shadow-md cursor-pointer transition-all flex flex-col justify-between group ${
+                    isOutOfStock 
+                      ? 'border-orange-200 opacity-80' 
+                      : 'hover:border-blue-500/40'
+                  }`}
+                  style={{ 
+                    backgroundColor: isOutOfStock ? '#FFF8F6' : 'var(--card)', 
+                    borderColor: isOutOfStock ? '#FFEBE5' : 'var(--card-border)' 
+                  }}
+                >
+                  <div>
+                    <div className="flex justify-between items-start gap-2 mb-1.5">
+                      <span className="text-[9px] font-bold text-zinc-400 uppercase tracking-widest font-mono">
+                        {product.internalCode || 'GRANEL'}
+                      </span>
+                      <span className={`text-[9px] font-semibold px-2 py-0.5 rounded font-mono ${
+                        isOutOfStock ? 'bg-orange-100 text-orange-700' : 'bg-slate-100 text-slate-700'
+                      }`}>
+                        {product.unit.toUpperCase()}
+                      </span>
+                    </div>
+                    <h3 className="font-bold text-xs tracking-tight line-clamp-2" style={{ color: 'var(--foreground)' }}>{product.name}</h3>
+                  </div>
+
+                  <div className="mt-3 flex justify-between items-baseline">
+                    <span className={`text-[10px] font-mono font-semibold ${isOutOfStock ? 'text-orange-600' : 'text-slate-500'}`}>
+                      {isOutOfStock 
+                        ? 'SIN STOCK' 
+                        : `Exist: ${sucursalStock.toFixed(product.unit === 'kg' ? 3 : 0)}`
+                      }
                     </span>
-                    <span className="text-[9px] font-semibold px-2 py-0.5 rounded bg-zinc-200 dark:bg-zinc-800 font-mono">
-                      {product.unit.toUpperCase()}
+                    <span className="text-md font-extrabold text-blue-600 font-mono">
+                      ${product.salePrice.toFixed(2)}
                     </span>
                   </div>
-                  <h3 className="font-bold text-xs tracking-tight line-clamp-2" style={{ color: 'var(--foreground)' }}>{product.name}</h3>
                 </div>
-
-                <div className="mt-3 flex justify-between items-baseline">
-                  <span className="text-zinc-400 dark:text-zinc-500 text-[10px] font-mono">
-                    Exist: {product.stock.toFixed(product.unit === 'kg' ? 3 : 0)}
-                  </span>
-                  <span className="text-md font-extrabold text-blue-700 dark:text-blue-400 font-mono">
-                    ${product.salePrice.toFixed(2)}
-                  </span>
-                </div>
-              </div>
-            ))}
+              );
+            })}
 
             {filteredProducts.length === 0 && (
               <div className="col-span-3 text-center py-20 text-zinc-500 text-sm">
@@ -1342,7 +1334,7 @@ export default function POSPage() {
         </div>
 
         {/* COLUMNA DERECHA: Carrito y Controles de Venta (5/12 cols) */}
-        <div id="pos-cart-panel" className="col-span-5 p-6 flex flex-col h-[calc(100vh-73px)] justify-between" style={{ backgroundColor: 'var(--card)' }}>
+        <div id="pos-cart-panel" className="col-span-5 p-6 flex flex-col h-[calc(100vh-67px)] justify-between bg-white border-l border-slate-200">
           
           {/* Carrito de Productos */}
           <div className="flex-grow flex flex-col overflow-hidden">
@@ -2470,6 +2462,20 @@ export default function POSPage() {
         </div>
       )}
 
+      {/* Admin PIN Validation Modal */}
+      <AdminPinModal
+        isOpen={isAdminPinOpen}
+        onClose={() => setIsAdminPinOpen(false)}
+        onSuccess={() => {
+          if (pinSuccessCallback) {
+            pinSuccessCallback();
+          } else if (pinTargetAction) {
+            router.push(pinTargetAction);
+          }
+        }}
+      />
+
+      </div>
     </div>
   );
 }
