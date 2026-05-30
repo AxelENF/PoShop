@@ -19,6 +19,7 @@ export interface ProductSeed {
   satUnit?: string;
   ivaPercent?: number;
   iepsPercent?: number;
+  stockPerBranch?: Record<string, number>;
 }
 
 export interface PresetProduct {
