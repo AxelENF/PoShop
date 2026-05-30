@@ -8,11 +8,13 @@ export const telegramRouter = createTRPCRouter({
   sendTestMessage: protectedProcedure
     .input(z.object({
       chatId: z.string().min(1, 'Se requiere el ID del Chat de Telegram'),
+      botToken: z.string().optional(),
     }))
     .mutation(async ({ input }) => {
       const success = await telegramService.sendMessage(
         input.chatId,
-        '🤖 <b>SNAPGAD POS</b>\n¡Conexión exitosa! Este canal recibirá las alertas de cortes de caja y existencias de tu negocio.'
+        '🤖 <b>SNAPGAD POS</b>\n¡Conexión exitosa! Este canal recibirá las alertas de cortes de caja y existencias de tu negocio.',
+        input.botToken
       );
 
       return {

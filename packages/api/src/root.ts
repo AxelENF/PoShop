@@ -3,12 +3,16 @@ import { productsRouter } from './routers/products';
 import { customersRouter } from './routers/customers';
 import { onboardingRouter } from './routers/onboarding';
 import { telegramRouter } from './routers/telegram';
+import { authRouter } from './routers/auth';
+import { analyticsRouter } from './routers/analytics';
 
 export const appRouter = createTRPCRouter({
   products: productsRouter,
   customers: customersRouter,
   onboarding: onboardingRouter,
   telegram: telegramRouter,
+  auth: authRouter,
+  analytics: analyticsRouter,
 });
 
 // Exponer la definición de tipos para el frontend

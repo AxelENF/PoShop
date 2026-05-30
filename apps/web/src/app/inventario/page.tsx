@@ -1,10 +1,15 @@
 'use client';
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { useRouter } from 'next/navigation';
 import { PRODUCTS_SEED, type ProductSeed, type PresetProduct, MEXICAN_PRESETS_CATALOG } from '../pos/products-seed';
 import Link from 'next/link';
 import { useUserSession } from '../../lib/user-session';
 import { SoundFx } from '../../lib/pos-utils';
+import Sidebar from '../../components/Sidebar';
+import AdminPinModal from '../../components/AdminPinModal';
+import { useAppTheme } from '../../components/theme-context';
+import { trpc } from '../../utils/trpc/client';
 
 interface RestorePoint {
   id: string;
@@ -21,8 +26,22 @@ export default function InventoryPage() {
   const [filterCategory, setFilterCategory] = useState('Todos');
   const [filterStatus, setFilterStatus] = useState<'Todos' | 'Saludable' | 'Mínimo' | 'Crítico'>('Todos');
 
-  // Estado local para simular CRUD interactivo en memoria
-  const [products, setProducts] = useState<ProductSeed[]>(PRODUCTS_SEED);
+  // Cargar productos desde tRPC con filtros reactivos de búsqueda y categoría
+  const { data: productsData, refetch: refetchProducts, isLoading } = trpc.products.list.useQuery({
+    search: search || undefined,
+    category: filterCategory === 'Todos' ? undefined : filterCategory,
+  });
+
+  const products = useMemo(() => {
+    return (productsData?.items || []) as any[];
+  }, [productsData]);
+
+  // Mutations
+  const createProductMutation = trpc.products.create.useMutation();
+  const updateProductMutation = trpc.products.updateProduct.useMutation();
+  const unpackBoxMutation = trpc.products.unpackBox.useMutation();
+  const bulkSeedMutation = trpc.products.bulkSeed.useMutation();
+  const updateThresholdsMutation = trpc.products.updateThresholds.useMutation();
 
   // --- COMPONENTE 2: ESTADOS PARA PUNTOS DE RESTAURACIÓN ---
   const [restorePoints, setRestorePoints] = useState<RestorePoint[]>([]);
@@ -37,6 +56,7 @@ export default function InventoryPage() {
   const [isQuickAuditMode, setIsQuickAuditMode] = useState(false);
   const [activeAuditIndex, setActiveAuditIndex] = useState<number | null>(null);
   const [originalStocks, setOriginalStocks] = useState<Record<string, number>>({});
+  const [auditStocks, setAuditStocks] = useState<Record<string, number>>({});
   const scannerFocusRef = useRef<HTMLInputElement | null>(null);
   const [barcodeInput, setBarcodeInput] = useState('');
 
@@ -69,7 +89,7 @@ export default function InventoryPage() {
   const [newExpiryDate, setNewExpiryDate] = useState(new Date(Date.now() + 180 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]);
 
   // Estados para Edición / Detalles de Producto Seleccionado
-  const [selectedProduct, setSelectedProduct] = useState<ProductSeed | null>(null);
+  const [selectedProduct, setSelectedProduct] = useState<any | null>(null);
   const [editSalePrice, setEditSalePrice] = useState('');
   const [editCostPrice, setEditCostPrice] = useState('');
   const [editStock, setEditStock] = useState('');
@@ -131,7 +151,19 @@ export default function InventoryPage() {
       { id: "prod-IMP8", name: "Mayonesa Hellmanns 390g", category: "Abarrotes", barcode: "7501005121341", internalCode: "AB-206", unit: "pza", costPrice: 34.00, salePrice: 48.00, stock: 45, stockMin: 8, stockCritical: 2 }
     ];
 
-    setProducts(prev => [...importedProducts, ...prev]);
+    await bulkSeedMutation.mutateAsync({
+      items: importedProducts.map(p => ({
+        name: p.name,
+        category: p.category,
+        barcode: p.barcode || '',
+        internalCode: p.internalCode || '',
+        unit: p.unit || 'pza',
+        costPrice: p.costPrice || 0,
+        salePrice: p.salePrice || 0,
+        stock: p.stock || 0,
+      }))
+    });
+    refetchProducts();
     SoundFx.playSuccess();
     
     await new Promise((r) => setTimeout(r, 1200));
@@ -141,24 +173,17 @@ export default function InventoryPage() {
     setImportMessage('');
   };
 
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const savedTheme = window.localStorage.getItem('snapgad_theme') as 'light' | 'dark';
-      if (savedTheme) {
-        setTheme(savedTheme);
-        document.documentElement.setAttribute('data-theme', savedTheme);
-      }
-    }
-  }, []);
+  const { isAdminUnlocked, setIsAdminUnlocked } = useAppTheme();
+  const [showPinModal, setShowPinModal] = useState(false);
+  const router = useRouter();
 
-  const toggleTheme = () => {
-    const nextTheme = theme === 'light' ? 'dark' : 'light';
-    setTheme(nextTheme);
-    if (typeof window !== 'undefined') {
-      window.localStorage.setItem('snapgad_theme', nextTheme);
-      document.documentElement.setAttribute('data-theme', nextTheme);
+  useEffect(() => {
+    if (!isAdminUnlocked) {
+      setShowPinModal(true);
     }
-  };
+  }, [isAdminUnlocked]);
+
+  // Quitado el autoguardado a localStorage local ya que ahora persiste en PostgreSQL cloud.
 
   // --- COMPONENTE 2: HOOK DE MONTAJE Y CARGA DE BACKUPS ---
   useEffect(() => {
@@ -174,6 +199,54 @@ export default function InventoryPage() {
     });
     setOriginalStocks(initialStocks);
   }, []);
+
+  // Inicializar stock de auditoría
+  useEffect(() => {
+    if (isQuickAuditMode) {
+      const initial: Record<string, number> = {};
+      products.forEach(p => {
+        initial[p.id] = p.stock;
+      });
+      setAuditStocks(initial);
+    }
+  }, [isQuickAuditMode, products]);
+
+  const handleApplyAudit = async () => {
+    SoundFx.playBeep();
+    const modifiedIds = Object.keys(auditStocks).filter(id => {
+      const p = products.find(prod => prod.id === id);
+      return p && auditStocks[id] !== p.stock;
+    });
+
+    if (modifiedIds.length === 0) {
+      setIsQuickAuditMode(false);
+      return;
+    }
+
+    if (confirm(`¿Deseas aplicar los ajustes de stock para ${modifiedIds.length} productos modificados en la nube?`)) {
+      try {
+        for (const id of modifiedIds) {
+          const p = products.find(prod => prod.id === id);
+          if (p) {
+            await updateProductMutation.mutateAsync({
+              id: p.id,
+              costPrice: p.costPrice,
+              salePrice: p.salePrice,
+              stock: auditStocks[id],
+            });
+          }
+        }
+        
+        refetchProducts();
+        setIsQuickAuditMode(false);
+        setAuditStocks({});
+        SoundFx.playSuccess();
+        alert('✓ Auditoría guardada y existencias actualizadas en la base de datos cloud.');
+      } catch (error: any) {
+        alert(`Error al guardar auditoría: ${error.message || error}`);
+      }
+    }
+  };
 
   // --- COMPONENTE 2: FUNCIONES PARA SNAPSHOTS DE RESPALDO ---
   const handleCreateSnapshot = () => {
@@ -196,20 +269,33 @@ export default function InventoryPage() {
     alert(`✓ Copia de seguridad "${newSnapshot.name}" creada con éxito.`);
   };
 
-  const handleRestoreSnapshot = (id: string) => {
+  const handleRestoreSnapshot = async (id: string) => {
     const snap = restorePoints.find(s => s.id === id);
     if (!snap) return;
     if (confirm(`⚠️ ¿ESTÁS SEGURO?\n\nRestaurarás el catálogo al punto "${snap.name}" (${snap.productsCount} productos). Se perderá cualquier stock o cambio hecho después.`)) {
-      setProducts(JSON.parse(JSON.stringify(snap.data)));
-      
-      const stocks: Record<string, number> = {};
-      snap.data.forEach(p => {
-        stocks[p.id] = p.stock;
-      });
-      setOriginalStocks(stocks);
+      try {
+        for (const p of snap.data) {
+          await updateProductMutation.mutateAsync({
+            id: p.id,
+            costPrice: p.costPrice,
+            salePrice: p.salePrice,
+            stock: p.stock,
+          });
+        }
+        
+        refetchProducts();
 
-      SoundFx.playSuccess();
-      alert('✓ Inventario restaurado al estado seleccionado.');
+        const stocks: Record<string, number> = {};
+        snap.data.forEach(p => {
+          stocks[p.id] = p.stock;
+        });
+        setOriginalStocks(stocks);
+
+        SoundFx.playSuccess();
+        alert('✓ Inventario restaurado con éxito al estado seleccionado en la nube.');
+      } catch (error: any) {
+        alert(`Error al restaurar instantánea: ${error.message || error}`);
+      }
     }
   };
 
@@ -223,14 +309,10 @@ export default function InventoryPage() {
   };
 
   // --- COMPONENTE 2: FUNCIONES PARA SEEDER MEXICANO CON PACKS ---
-  const handleSeedProducts = (e: React.FormEvent) => {
+  const handleSeedProducts = async (e: React.FormEvent) => {
     e.preventDefault();
-    SoundFx.playSuccess();
-    
-    let addedCount = 0;
-    let updatedCount = 0;
-    const toAdd: ProductSeed[] = [];
-    
+
+    const itemsToSeed: any[] = [];
     MEXICAN_PRESETS_CATALOG.forEach((preset) => {
       const qty = seederQuantities[preset.internalCode];
       if (!qty) return;
@@ -239,50 +321,32 @@ export default function InventoryPage() {
       
       if (pieces === 0 && packs === 0) return;
       
-      // Stock total = piezas + cajas * multiplicador
       const totalStock = pieces + (packs * preset.packQuantity);
-      
-      // Buscar si el producto ya existe en inventario
-      const existingProduct = products.find(p => p.barcode === preset.barcode || p.internalCode === preset.internalCode);
-      
-      if (existingProduct) {
-        // Upsert: sumar existencias
-        setProducts(prev => prev.map(p => {
-          if (p.id === existingProduct.id) {
-            updatedCount++;
-            return { ...p, stock: p.stock + totalStock };
-          }
-          return p;
-        }));
-      } else {
-        // Crear nuevo
-        const newProd: ProductSeed = {
-          id: `prod-SEED-${Math.random().toString(36).substring(2, 9).toUpperCase()}`,
-          name: preset.name,
-          category: preset.category,
-          barcode: preset.barcode,
-          internalCode: preset.internalCode,
-          unit: preset.unit,
-          costPrice: preset.defaultCost,
-          salePrice: preset.defaultPrice,
-          stock: totalStock,
-          stockMin: 15,
-          stockCritical: 5,
-          satCode: preset.satCode,
-          satUnit: preset.satUnit
-        };
-        toAdd.push(newProd);
-        addedCount++;
-      }
+
+      itemsToSeed.push({
+        name: preset.name,
+        category: preset.category,
+        barcode: preset.barcode,
+        internalCode: preset.internalCode,
+        unit: preset.unit,
+        costPrice: preset.defaultCost,
+        salePrice: preset.defaultPrice,
+        stock: totalStock,
+      });
     });
-    
-    if (toAdd.length > 0) {
-      setProducts(prev => [...toAdd, ...prev]);
+
+    if (itemsToSeed.length === 0) return;
+
+    try {
+      const res = await bulkSeedMutation.mutateAsync({ items: itemsToSeed });
+      refetchProducts();
+      setSeederQuantities({});
+      setIsSeederModalOpen(false);
+      SoundFx.playSuccess();
+      alert(`✓ Semillero cargado: ${res.addedCount} productos nuevos creados, ${res.updatedCount} productos actualizados.`);
+    } catch (error: any) {
+      alert(`Error al sembrar productos: ${error.message || error}`);
     }
-    
-    setSeederQuantities({});
-    setIsSeederModalOpen(false);
-    alert(`✓ Semillero cargado: ${addedCount} productos nuevos creados, ${updatedCount} productos actualizados.`);
   };
 
   // --- COMPONENTE 3: ATAJOS DE TECLADO Y FOCO PARA AUDITORÍA ---
@@ -342,19 +406,24 @@ export default function InventoryPage() {
   };
 
   // --- COMPONENTE 4: CONTROL GLOBAL DE ALERTAS ---
-  const handleApplyGlobalThresholds = () => {
+  const handleApplyGlobalThresholds = async () => {
     const minVal = parseFloat(globalStockMin) || 0;
     const critVal = parseFloat(globalStockCritical) || 0;
     
     if (confirm(`¿Deseas aplicar una alerta de stock mínimo de ${minVal} y crítico de ${critVal} a todos los productos de la categoría "${filterCategory}"?`)) {
-      setProducts(prev => prev.map(p => {
-        if (filterCategory === 'Todos' || p.category === filterCategory) {
-          return { ...p, stockMin: minVal, stockCritical: critVal };
-        }
-        return p;
-      }));
-      SoundFx.playSuccess();
-      alert('✓ Alertas de stock aplicadas correctamente.');
+      try {
+        await updateThresholdsMutation.mutateAsync({
+          category: filterCategory,
+          stockMin: minVal,
+          stockCritical: critVal,
+        });
+
+        refetchProducts();
+        SoundFx.playSuccess();
+        alert('✓ Alertas de stock aplicadas correctamente en la base de datos.');
+      } catch (error: any) {
+        alert(`Error al actualizar alertas: ${error.message || error}`);
+      }
     }
   };
 
@@ -386,45 +455,43 @@ export default function InventoryPage() {
   }, [products, search, filterCategory, filterStatus]);
 
   // Manejar creación de producto
-  const handleCreateProduct = (e: React.FormEvent) => {
+  const handleCreateProduct = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newName.trim() || !newInternalCode.trim()) return;
 
-    const newProduct: ProductSeed = {
-      id: `prod-${Math.random().toString(36).substring(2, 9).toUpperCase()}`,
-      name: newName,
-      category: newCategory,
-      barcode: newBarcode.trim(),
-      internalCode: newInternalCode.toUpperCase().trim(),
-      unit: newUnit,
-      costPrice: parseFloat(newCostPrice) || 0,
-      salePrice: parseFloat(newSalePrice) || 0,
-      stock: parseFloat(newStock) || 0,
-      stockMin: parseFloat(newStockMin) || 0,
-      stockCritical: parseFloat(newStockCritical) || 0,
-      hasVariants: newHasVariants,
-      variantsList: newHasVariants ? newVariantsText.split(',').map(v => v.trim()).filter(Boolean) : undefined,
-      trackExpiry: newTrackExpiry,
-      expirationBatch: newTrackExpiry ? [{ batchCode: newExpiryBatch, expiryDate: newExpiryDate, stock: parseFloat(newStock) || 0 }] : undefined,
-      ivaPercent: newIvaPercent,
-      iepsPercent: newIepsPercent,
-    };
+    try {
+      const newProduct = await createProductMutation.mutateAsync({
+        name: newName,
+        category: newCategory,
+        barcode: newBarcode.trim() || undefined,
+        internalCode: newInternalCode.toUpperCase().trim() || undefined,
+        unit: newUnit,
+        costPrice: parseFloat(newCostPrice) || 0,
+        salePrice: parseFloat(newSalePrice) || 0,
+        stock: parseFloat(newStock) || 0,
+        stockMin: parseFloat(newStockMin) || 0,
+        stockCritical: parseFloat(newStockCritical) || 0,
+      });
 
-    setProducts(prev => [...prev, newProduct]);
-    setIsNewModalOpen(false);
+      refetchProducts();
+      setIsNewModalOpen(false);
+      SoundFx.playSuccess();
 
-    // Resetear formulario
-    setNewName('');
-    setNewBarcode('');
-    setNewInternalCode('');
-    setNewCostPrice('10');
-    setNewSalePrice('15');
-    setNewStock('50');
-    setNewHasVariants(false);
-    setNewVariantsText('');
-    setNewTrackExpiry(false);
-    setNewIvaPercent(0);
-    setNewIepsPercent(0);
+      // Resetear formulario
+      setNewName('');
+      setNewBarcode('');
+      setNewInternalCode('');
+      setNewCostPrice('10');
+      setNewSalePrice('15');
+      setNewStock('50');
+      setNewHasVariants(false);
+      setNewVariantsText('');
+      setNewTrackExpiry(false);
+      setNewIvaPercent(0);
+      setNewIepsPercent(0);
+    } catch (error: any) {
+      alert(`Error al crear producto: ${error.message || error}`);
+    }
   };
 
   // Cargar datos en el drawer de edición cuando se selecciona un producto
@@ -444,110 +511,71 @@ export default function InventoryPage() {
   };
 
   // Guardar cambios del producto
-  const handleSaveProductChanges = (e: React.FormEvent) => {
+  const handleSaveProductChanges = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedProduct) return;
 
-    setProducts(prev => prev.map(p => {
-      if (p.id === selectedProduct.id) {
-        const updated = {
-          ...p,
-          salePrice: parseFloat(editSalePrice) || p.salePrice,
-          costPrice: parseFloat(editCostPrice) || p.costPrice,
-          stock: parseFloat(editStock) || p.stock,
-          ivaPercent: editIvaPercent,
-          iepsPercent: editIepsPercent,
-        };
-        setSelectedProduct(updated);
-        return updated;
-      }
-      return p;
-    }));
+    try {
+      const updated = await updateProductMutation.mutateAsync({
+        id: selectedProduct.id,
+        costPrice: parseFloat(editCostPrice) || 0,
+        salePrice: parseFloat(editSalePrice) || 0,
+        stock: parseFloat(editStock) || 0,
+      });
 
-    alert('Detalles del producto actualizados.');
+      setSelectedProduct(updated);
+      refetchProducts();
+      SoundFx.playSuccess();
+      alert('Detalles del producto actualizados.');
+    } catch (error: any) {
+      alert(`Error al actualizar producto: ${error.message || error}`);
+    }
   };
 
-  // Desensamblar Caja (Unpack) con Autoguardado e Historial
-  const handleUnpackBox = () => {
+  // Desensamblar Caja (Unpack) con base de datos transaccional
+  const handleUnpackBox = async () => {
     if (!selectedProduct || selectedProduct.stock < 1 || !unpackTargetId) return;
 
     const targetProduct = products.find(p => p.id === unpackTargetId);
     if (!targetProduct) return;
 
-    if (confirm(`📦 ¿DESENSAMBLAR CAJA?\n\nSe restará 1 unidad de "${selectedProduct.name}" (Stock actual: ${selectedProduct.stock}) y se sumarán ${unpackMultiplier} unidades a "${targetProduct.name}" (Stock actual: ${targetProduct.stock}).\n\nSe creará una copia de seguridad automática.`)) {
-      // 1. AUTO-SAVE SNAPSHOT BEFORE MUTATION
-      const newSnapshot: RestorePoint = {
-        id: `snap-auto-${Date.now()}`,
-        timestamp: Date.now(),
-        name: `Autoguardado: Unpack ${selectedProduct.internalCode}`,
-        productsCount: products.length,
-        data: JSON.parse(JSON.stringify(products)),
-      };
-      
-      const updatedSnapshots = [newSnapshot, ...restorePoints].slice(0, 5);
-      setRestorePoints(updatedSnapshots);
-      localStorage.setItem('pos_snapshots', JSON.stringify(updatedSnapshots));
+    if (confirm(`📦 ¿DESENSAMBLAR CAJA?\n\nSe restará 1 unidad de "${selectedProduct.name}" (Stock actual: ${selectedProduct.stock}) y se sumarán ${unpackMultiplier} unidades a "${targetProduct.name}" (Stock actual: ${targetProduct.stock}).`)) {
+      try {
+        const result = await unpackBoxMutation.mutateAsync({
+          parentId: selectedProduct.id,
+          childId: unpackTargetId,
+          multiplier: unpackMultiplier,
+        });
 
-      // 2. MUTATE PRODUCTS STOCK
-      setProducts(prev => prev.map(p => {
-        if (p.id === selectedProduct.id) {
-          const updated = { ...p, stock: p.stock - 1 };
-          setSelectedProduct(updated);
-          return updated;
-        }
-        if (p.id === unpackTargetId) {
-          return { ...p, stock: p.stock + unpackMultiplier };
-        }
-        return p;
-      }));
-
-      SoundFx.playSuccess();
-      alert(`✓ Éxito: Se desensambló 1 caja. "${selectedProduct.name}" restó 1. "${targetProduct.name}" sumó +${unpackMultiplier}.`);
+        setSelectedProduct(result.parent);
+        refetchProducts();
+        SoundFx.playSuccess();
+        alert(`✓ Éxito: Se desensambló 1 caja. "${selectedProduct.name}" restó 1. "${targetProduct.name}" sumó +${unpackMultiplier}.`);
+      } catch (error: any) {
+        alert(`Error al desensamblar caja: ${error.message || error}`);
+      }
     }
   };
 
   return (
-    <div className="min-h-screen flex flex-col" style={{ backgroundColor: 'var(--background)', color: 'var(--foreground)' }}>
-      {/* Cabecera Principal */}
-      <header className="px-6 py-4 flex justify-between items-center border-b" style={{ borderColor: 'var(--card-border)' }}>
-        <div className="flex items-center gap-6">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-blue-700 flex items-center justify-center font-bold text-white text-md">
-              S
-            </div>
-            <div>
-              <span className="font-bold text-lg tracking-tight">SNAPGAD</span>
-              <span className="text-xs ml-2 text-zinc-500 border-l pl-2 border-zinc-300 dark:border-zinc-800 uppercase">
-                Panel de Inventario
-              </span>
-            </div>
+    <div className="flex min-h-screen bg-slate-50 font-sans">
+      <Sidebar />
+      <div className="flex-1 flex flex-col min-w-0 h-screen overflow-y-auto">
+        {!isAdminUnlocked ? (
+          <div className="flex-grow flex items-center justify-center bg-slate-50">
+            <AdminPinModal
+              isOpen={showPinModal}
+              onClose={() => router.push('/pos')}
+              onSuccess={() => {
+                setIsAdminUnlocked(true);
+                setShowPinModal(false);
+              }}
+            />
           </div>
-          
-          <nav className="hidden md:flex gap-4 text-sm font-semibold ml-8">
-            <Link href="/pos" className="text-zinc-500 hover:text-blue-600 transition-colors">Caja POS</Link>
-            <Link href="/inventario" className="text-blue-700 dark:text-blue-400">Inventario</Link>
-            <Link href="/clientes" className="text-zinc-500 hover:text-blue-600 transition-colors">Clientes</Link>
-            {session.role !== 'cashier' && (
-              <Link href="/admin" className="text-zinc-500 hover:text-blue-600 transition-colors">Control Ejecutivo</Link>
-            )}
-          </nav>
-        </div>
-
-        <div className="flex items-center gap-4">
-          <span className="text-xs font-mono text-zinc-500">ROL: {session.role.toUpperCase()}</span>
-          <button
-            onClick={toggleTheme}
-            className="p-2 rounded border hover:bg-zinc-100 dark:hover:bg-zinc-800 text-xs font-bold"
-            style={{ borderColor: 'var(--card-border)' }}
-            title="Cambiar Tema"
-          >
-            {theme === 'light' ? '🌙 TEMA OSCURO' : '☀️ TEMA CLARO'}
-          </button>
-        </div>
-      </header>
-
-      {/* Contenido Principal */}
-      <main className="flex-grow p-6 flex flex-col max-w-7xl mx-auto w-full">
+        ) : (
+          <>
+        {/* Contenido Principal */}
+        <main className="flex-grow p-6 flex flex-col w-full">
         <div className="mb-8 flex justify-between items-start flex-wrap gap-4">
           <div>
             <h1 className="text-2xl font-extrabold tracking-tight">Control de Existencias</h1>
@@ -719,6 +747,16 @@ export default function InventoryPage() {
                 {isQuickAuditMode ? '⌨️ AUDITORÍA RÁPIDA: ACTIVA' : '⌨️ MODO AUDITORÍA RÁPIDA'}
               </button>
 
+              {isQuickAuditMode && (
+                <button 
+                  type="button"
+                  onClick={handleApplyAudit}
+                  className="py-2.5 px-4 rounded-lg font-bold text-xs bg-amber-500 hover:bg-amber-600 text-white transition-all flex items-center gap-1.5 shadow-lg shadow-amber-950/20"
+                >
+                  💾 APLICAR AUDITORÍA
+                </button>
+              )}
+
               {/* --- COMPONENTE 2: BOTÓN DEL SEMILLERO MEXICANO --- */}
               <button 
                 type="button"
@@ -841,10 +879,11 @@ export default function InventoryPage() {
                               {/* Badge de Discrepancia */}
                               {(() => {
                                 const orig = originalStocks[product.id] ?? product.stock;
-                                const diff = product.stock - orig;
+                                const currentVal = auditStocks[product.id] ?? product.stock;
+                                const diff = currentVal - orig;
                                 if (diff < 0) {
                                   return <span className="px-1.5 py-0.5 rounded bg-red-500/10 text-red-500 font-extrabold text-[9px] font-mono">-{Math.abs(diff)} Merma</span>;
-                                } else if (diff > 0) {
+                                  } else if (diff > 0) {
                                   return <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-500 font-extrabold text-[9px] font-mono">+{diff} Sobrante</span>;
                                 }
                                 return <span className="px-1.5 py-0.5 rounded bg-zinc-800/60 text-[9px] text-zinc-500 font-mono">Ok</span>;
@@ -854,10 +893,10 @@ export default function InventoryPage() {
                                 id={`audit-input-${filteredProducts.indexOf(product)}`}
                                 type="number"
                                 step={product.unit === 'kg' ? '0.001' : '1'}
-                                value={product.stock}
+                                value={auditStocks[product.id] ?? product.stock}
                                 onChange={(e) => {
                                   const val = parseFloat(e.target.value) || 0;
-                                  setProducts(prev => prev.map(p => p.id === product.id ? { ...p, stock: val } : p));
+                                  setAuditStocks(prev => ({ ...prev, [product.id]: val }));
                                 }}
                                 onKeyDown={(e) => handleAuditKeyDown(e, filteredProducts.indexOf(product))}
                                 className="w-20 p-1.5 rounded border text-right font-mono font-bold text-xs bg-zinc-900 border-zinc-800 focus:border-amber-500 focus:ring-1 focus:ring-amber-500 focus:outline-none text-white"
@@ -1135,6 +1174,8 @@ export default function InventoryPage() {
 
         </div>
       </main>
+    </>
+  )}
 
       {/* MODAL PARA NUEVO PRODUCTO */}
       {isNewModalOpen && (
@@ -1578,6 +1619,7 @@ export default function InventoryPage() {
         </div>
       )}
 
+      </div>
     </div>
   );
 }

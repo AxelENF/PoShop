@@ -14,7 +14,7 @@ export default function ReportePdfPage() {
   return (
     <div className="min-h-screen bg-white text-zinc-950 p-8 font-mono text-xs leading-relaxed max-w-4xl mx-auto">
       {/* Estilos para ocultar headers nativos en impresión */}
-      <style jsx global>{`
+      <style dangerouslySetInnerHTML={{__html: `
         @media print {
           body {
             background-color: #fff !important;
@@ -26,7 +26,7 @@ export default function ReportePdfPage() {
             display: none !important;
           }
         }
-      `}</style>
+      `}} />
 
       {/* Botón Flotante de Retorno No Imprimible */}
       <div className="no-print mb-8 p-4 rounded-xl bg-zinc-100 border border-zinc-200 flex justify-between items-center">

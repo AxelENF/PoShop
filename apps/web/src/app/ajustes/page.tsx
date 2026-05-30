@@ -2,9 +2,23 @@
 
 import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { validateSATRFC, SoundFx } from '../../lib/pos-utils';
+import Sidebar from '../../components/Sidebar';
+import AdminPinModal from '../../components/AdminPinModal';
+import { useAppTheme } from '../../components/theme-context';
 
 export default function AjustesPage() {
+  const { isAdminUnlocked, setIsAdminUnlocked } = useAppTheme();
+  const [showPinModal, setShowPinModal] = useState(false);
+  const router = useRouter();
+
+  useEffect(() => {
+    if (!isAdminUnlocked) {
+      setShowPinModal(true);
+    }
+  }, [isAdminUnlocked]);
+
   // Telegram States
   const [chatId, setChatId] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -273,31 +287,28 @@ export default function AjustesPage() {
     setTimeout(() => setSaveSuccess(false), 3000);
   };
 
-  return (
-    <div className="min-h-screen flex flex-col" style={{ backgroundColor: 'var(--background)', color: 'var(--foreground)' }}>
-      {/* Cabecera Principal */}
-      <header className="px-6 py-4 flex justify-between items-center border-b" style={{ borderColor: 'var(--card-border)' }}>
-        <div className="flex items-center gap-6">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-blue-700 flex items-center justify-center font-bold text-white text-md">
-              S
-            </div>
-            <div>
-              <span className="font-bold text-lg tracking-tight">SNAPGAD</span>
-              <span className="text-xs ml-2 text-zinc-500 border-l pl-2 border-zinc-300 dark:border-zinc-800 uppercase font-semibold">
-                Panel de Control
-              </span>
-            </div>
-          </div>
-          
-          <nav className="hidden md:flex gap-4 text-sm font-semibold ml-8">
-            <Link href="/pos" className="text-zinc-500 hover:text-blue-600 transition-colors">&larr; Volver a la Caja (POS)</Link>
-          </nav>
-        </div>
-      </header>
+  // Restringir acceso si no tiene PIN de supervisor/admin desbloqueado
+  if (!isAdminUnlocked) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center font-sans">
+        <AdminPinModal
+          isOpen={showPinModal}
+          onClose={() => router.push('/pos')}
+          onSuccess={() => {
+            setIsAdminUnlocked(true);
+            setShowPinModal(false);
+          }}
+        />
+      </div>
+    );
+  }
 
-      {/* Contenido de Ajustes */}
-      <main className="flex-grow p-6 max-w-4xl mx-auto w-full mt-8">
+  return (
+    <div className="flex min-h-screen bg-slate-50 font-sans">
+      <Sidebar />
+      <div className="flex-1 flex flex-col min-w-0 h-screen overflow-y-auto">
+        {/* Contenido de Ajustes */}
+        <main className="flex-grow p-6 w-full max-w-4xl mx-auto mt-8">
         <h1 className="text-3xl font-extrabold tracking-tight mb-2">Ajustes del Comercio</h1>
         <p className="text-zinc-500 text-sm mb-12">
           Configuración global de la sucursal, alertas proactivas y credenciales de facturación.
@@ -792,7 +803,8 @@ export default function AjustesPage() {
           </section>
 
         </div>
-      </main>
+        </main>
+      </div>
     </div>
   );
 }

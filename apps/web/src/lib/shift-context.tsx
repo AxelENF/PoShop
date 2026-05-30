@@ -1,6 +1,7 @@
 'use client';
 
 import { createContext, useContext, useState, ReactNode, useEffect } from 'react';
+import { useUserSession } from './user-session';
 
 export interface Shift {
   id: string;
@@ -32,6 +33,7 @@ const ShiftContext = createContext<ShiftContextType | null>(null);
 export function ShiftProvider({ children }: { children: ReactNode }) {
   const [activeShift, setActiveShift] = useState<Shift | null>(null);
   const [elapsedTime, setElapsedTime] = useState('00:00:00');
+  const { session } = useUserSession();
 
   // Restaurar turno activo desde localStorage al recargar
   useEffect(() => {
@@ -62,8 +64,8 @@ export function ShiftProvider({ children }: { children: ReactNode }) {
   const openShift = (openingCash: number, branchName?: string, cashRegisterName?: string) => {
     const newShift: Shift = {
       id: `shift-${Math.random().toString(36).substring(2, 9).toUpperCase()}`,
-      cashierId: 'usr-001', // TODO: from useUserSession
-      cashierName: 'Cajero Activo',
+      cashierId: session?.id || 'usr-001',
+      cashierName: session?.name || 'Cajero Activo',
       branchName: branchName || 'Matriz Centro',
       cashRegisterName: cashRegisterName || 'Caja 01',
       openingCash,

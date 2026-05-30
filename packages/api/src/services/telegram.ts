@@ -10,14 +10,16 @@ export class TelegramService {
   /**
    * Enviar un mensaje de texto simple a un chat de Telegram
    */
-  async sendMessage(chatId: string, text: string): Promise<boolean> {
-    if (!this.botToken) {
+  async sendMessage(chatId: string, text: string, customBotToken?: string): Promise<boolean> {
+    const token = customBotToken || this.botToken;
+    if (!token) {
       console.warn('⚠️ TELEGRAM_BOT_TOKEN no configurado. Mensaje ignorado:', text);
       return false; // Simulación de bypass local
     }
 
     try {
-      const response = await fetch(`${this.baseUrl}/sendMessage`, {
+      const activeBaseUrl = `https://api.telegram.org/bot${token}`;
+      const response = await fetch(`${activeBaseUrl}/sendMessage`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

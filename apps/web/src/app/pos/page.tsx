@@ -11,6 +11,8 @@ import { saveCatalogLocal, getLocalProducts, saveOfflineSale, getPendingSales, d
 import { useAppTheme } from '../../components/theme-context';
 import Sidebar from '../../components/Sidebar';
 import AdminPinModal from '../../components/AdminPinModal';
+import PinLockScreen from '../../components/PinLockScreen';
+import SupervisorOverrideModal from '../../components/SupervisorOverrideModal';
 
 interface CartItem {
   product: ProductSeed;
@@ -21,8 +23,33 @@ const QUICK_CASH_BILLS = [20, 50, 100, 200, 500];
 
 export default function POSPage() {
   const router = useRouter();
-  const { session, setRoleForDev } = useUserSession();
+  const { session, setRoleForDev, activeCashier, setActiveCashier } = useUserSession();
   const { activeShift, closeShift, recordSale, elapsedTime } = useShift();
+
+  // Supervisor Override State
+  const [isSupervisorModalOpen, setIsSupervisorModalOpen] = useState(false);
+  const [supervisorActionDesc, setSupervisorActionDesc] = useState('');
+  const [supervisorCallback, setSupervisorCallback] = useState<(() => void) | null>(null);
+
+  const executeRestrictedAction = (desc: string, action: () => void) => {
+    if (session.role === 'cashier') {
+      setSupervisorActionDesc(desc);
+      setSupervisorCallback(() => action);
+      setIsSupervisorModalOpen(true);
+    } else {
+      action();
+    }
+  };
+
+  // Blind closure state for tarjetas
+  const [cardsDeclared, setCardsDeclared] = useState('');
+
+  // Redirigir al Launchpad si no hay turno activo y el rol es Cajero
+  useEffect(() => {
+    if (!activeShift && session.role === 'cashier') {
+      router.push('/pos/turno');
+    }
+  }, [activeShift, session, router]);
 
   const { theme, activeBranch } = useAppTheme();
   const [isAdminPinOpen, setIsAdminPinOpen] = useState(false);
@@ -167,9 +194,23 @@ export default function POSPage() {
 
   const searchInputRef = useRef<HTMLInputElement>(null);
 
-  // Cargar carrito persistido en localStorage al montar para evitar F5 wipe
+  // Cargar carrito y catálogo persistidos en localStorage al montar para evitar F5 wipe
   useEffect(() => {
     if (typeof window !== 'undefined') {
+      // Sincronizar catálogo local de productos desde localStorage
+      const savedProductsStr = window.localStorage.getItem('snapgad_pos_products_catalog');
+      if (savedProductsStr) {
+        try {
+          const parsed = JSON.parse(savedProductsStr);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            PRODUCTS_SEED.length = 0;
+            PRODUCTS_SEED.push(...parsed);
+          }
+        } catch (e) {
+          console.error('Error cargando catálogo local en POS:', e);
+        }
+      }
+
       const savedCart = window.localStorage.getItem('snapgad_pos_cart');
       if (savedCart) {
         try {
@@ -512,26 +553,43 @@ export default function POSPage() {
       removeFromCart(productId);
       return;
     }
-    setCart((prev) =>
-      prev.map((item) =>
-        item.product.id === productId ? { ...item, quantity: qty } : item
-      )
-    );
+    const item = cart.find((i) => i.product.id === productId);
+    if (!item) return;
+
+    if (qty < item.quantity) {
+      executeRestrictedAction('Disminuir cantidad de producto en caja', () => {
+        setCart((prev) =>
+          prev.map((item) =>
+            item.product.id === productId ? { ...item, quantity: qty } : item
+          )
+        );
+      });
+    } else {
+      setCart((prev) =>
+        prev.map((item) =>
+          item.product.id === productId ? { ...item, quantity: qty } : item
+        )
+      );
+    }
   };
 
   const removeFromCart = (productId: string) => {
-    setCart((prev) => prev.filter((item) => item.product.id !== productId));
+    executeRestrictedAction('Eliminar artículo del carrito', () => {
+      setCart((prev) => prev.filter((item) => item.product.id !== productId));
+    });
   };
 
   const clearCart = () => {
-    setCart([]);
-    if (customers.length > 0) {
-      setSelectedCustomer(customers[0]);
-    } else {
-      setSelectedCustomer(CUSTOMERS_SEED[0]);
-    }
-    setReceivedCash('');
-    setReceipt(null);
+    executeRestrictedAction('Vaciar el carrito de compras', () => {
+      setCart([]);
+      if (customers.length > 0) {
+        setSelectedCustomer(customers[0]);
+      } else {
+        setSelectedCustomer(CUSTOMERS_SEED[0]);
+      }
+      setReceivedCash('');
+      setReceipt(null);
+    });
   };
 
   // Crear Cliente Exprés desde Caja
@@ -849,12 +907,16 @@ export default function POSPage() {
                 remainingQty -= depleted;
               }
             }
-
             // Guardar la lista de lotes actualizada
             prod.expirationBatch = sortedBatches;
           }
         }
       });
+
+      // Sincronizar catálogo actualizado con localStorage
+      if (typeof window !== 'undefined') {
+        window.localStorage.setItem('snapgad_pos_products_catalog', JSON.stringify(PRODUCTS_SEED));
+      }
 
       let updatedCreditDetails = null;
 
@@ -984,8 +1046,11 @@ export default function POSPage() {
   const handleCloseShift = () => {
     if (!activeShift) return;
     const finalDrawerCash = parseFloat(cashInDrawer) || 0;
+    const finalDrawerCards = parseFloat(cardsDeclared) || 0;
     const expectedDrawerCash = activeShift.openingCash + activeShift.salesByCash;
+    const expectedDrawerCards = activeShift.salesByCard;
     const difference = finalDrawerCash - expectedDrawerCash;
+    const cardDifference = finalDrawerCards - expectedDrawerCards;
 
     const summary = {
       ...activeShift,
@@ -993,6 +1058,9 @@ export default function POSPage() {
       finalDrawerCash,
       expectedDrawerCash,
       difference,
+      finalDrawerCards,
+      expectedDrawerCards,
+      cardDifference,
     };
 
     setCierreSummary(summary);
@@ -1002,6 +1070,17 @@ export default function POSPage() {
 
     closeShift();
   };
+
+  // Lock Screen: If no active cashier is authenticated, show PIN Lock Screen
+  if (!activeCashier) {
+    return (
+      <PinLockScreen
+        onSuccess={(cashier) => {
+          setActiveCashier(cashier);
+        }}
+      />
+    );
+  }
 
   // Prevenir carga si no hay turno
   if (!activeShift) {
@@ -1037,11 +1116,32 @@ export default function POSPage() {
                 <span className="font-bold text-white">${cierreSummary.finalDrawerCash.toFixed(2)}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-zinc-400">DIFERENCIA:</span>
+                <span className="text-zinc-400">DIFERENCIA EFECTIVO:</span>
                 <span className={`font-bold ${cierreSummary.difference >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
                   ${cierreSummary.difference.toFixed(2)} {cierreSummary.difference >= 0 ? '(Sobrante)' : '(Faltante)'}
                 </span>
               </div>
+
+              {/* Blind card counts breakdown */}
+              {cierreSummary.finalDrawerCards !== undefined && (
+                <>
+                  <div className="flex justify-between border-t border-dashed border-zinc-800 pt-3">
+                    <span className="text-zinc-400">TARJETA DECLARADA:</span>
+                    <span className="font-bold text-white">${cierreSummary.finalDrawerCards.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between text-zinc-300">
+                    <span className="text-zinc-400">TARJETA ESPERADA:</span>
+                    <span>${cierreSummary.expectedDrawerCards.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-zinc-400">DIFERENCIA TARJETA:</span>
+                    <span className={`font-bold ${cierreSummary.cardDifference >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                      ${cierreSummary.cardDifference.toFixed(2)} {cierreSummary.cardDifference >= 0 ? '(Sobrante)' : '(Faltante)'}
+                    </span>
+                  </div>
+                </>
+              )}
+
               <div className="border-t border-zinc-800 pt-4 mt-4 space-y-1">
                 <div className="flex justify-between text-xs text-zinc-500">
                   <span>VENTAS TARJETA:</span>
@@ -1992,21 +2092,46 @@ export default function POSPage() {
                 </div>
               </div>
 
-              {/* Resumen del Turno del Contexto */}
-              <div className="rounded-lg p-3 font-mono text-xs space-y-2 border" style={{ backgroundColor: 'var(--background)', borderColor: 'var(--card-border)' }}>
-                <div className="flex justify-between" style={{ color: 'var(--muted)' }}>
-                  <span>FONDO INICIAL:</span>
-                  <span style={{ color: 'var(--foreground)' }}>${activeShift.openingCash.toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between" style={{ color: 'var(--muted)' }}>
-                  <span>VENTAS EFECTIVO:</span>
-                  <span style={{ color: 'var(--foreground)' }}>${activeShift.salesByCash.toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between border-t border-dashed pt-2" style={{ borderColor: 'var(--card-border)', color: 'var(--muted)' }}>
-                  <span>CAJA ESPERADA:</span>
-                  <span className="font-bold" style={{ color: 'var(--foreground)' }}>${(activeShift.openingCash + activeShift.salesByCash).toFixed(2)}</span>
+              <div>
+                <label className="block text-[10px] font-bold uppercase tracking-widest mb-2" style={{ color: 'var(--muted)' }}>Comprobantes de Tarjeta Declarados</label>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 font-bold" style={{ color: 'var(--muted)' }}>$</span>
+                  <input
+                    type="number"
+                    placeholder="0.00"
+                    value={cardsDeclared}
+                    onChange={(e) => setCardsDeclared(e.target.value)}
+                    className="w-full pl-7 pr-4 py-3 rounded-lg border font-mono font-bold text-lg focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                    style={{ backgroundColor: 'var(--background)', borderColor: 'var(--card-border)', color: 'var(--foreground)' }}
+                  />
                 </div>
               </div>
+
+              {/* Resumen del Turno del Contexto - Ocultado si es Cajero (Cierre a Ciegas) */}
+              {session.role !== 'cashier' ? (
+                <div className="rounded-lg p-3 font-mono text-xs space-y-2 border" style={{ backgroundColor: 'var(--background)', borderColor: 'var(--card-border)' }}>
+                  <div className="flex justify-between" style={{ color: 'var(--muted)' }}>
+                    <span>FONDO INICIAL:</span>
+                    <span style={{ color: 'var(--foreground)' }}>${activeShift.openingCash.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between" style={{ color: 'var(--muted)' }}>
+                    <span>VENTAS EFECTIVO:</span>
+                    <span style={{ color: 'var(--foreground)' }}>${activeShift.salesByCash.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between" style={{ color: 'var(--muted)' }}>
+                    <span>VENTAS TARJETA:</span>
+                    <span style={{ color: 'var(--foreground)' }}>${activeShift.salesByCard.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between border-t border-dashed pt-2" style={{ borderColor: 'var(--card-border)', color: 'var(--muted)' }}>
+                    <span>CAJA ESPERADA (EFECTIVO):</span>
+                    <span className="font-bold" style={{ color: 'var(--foreground)' }}>${(activeShift.openingCash + activeShift.salesByCash).toFixed(2)}</span>
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded-lg p-3 text-xs bg-amber-500/10 border border-amber-500/20 text-amber-600 font-semibold leading-relaxed">
+                  ⚠️ <strong>Cierre a Ciegas Activo:</strong> Los saldos calculados por el sistema están ocultos por seguridad. Ingrese el conteo manual físico real.
+                </div>
+              )}
             </div>
 
             <div className="flex gap-3">
@@ -2447,6 +2572,9 @@ export default function POSPage() {
                   const prod = PRODUCTS_SEED.find(p => p.id === mermaProduct.id);
                   if (prod) {
                     prod.stock = Math.max(0, prod.stock - qty);
+                    if (typeof window !== 'undefined') {
+                      window.localStorage.setItem('snapgad_pos_products_catalog', JSON.stringify(PRODUCTS_SEED));
+                    }
                   }
                   
                   SoundFx.playSuccess();
@@ -2473,6 +2601,19 @@ export default function POSPage() {
             router.push(pinTargetAction);
           }
         }}
+      />
+
+      {/* Supervisor Override Modal */}
+      <SupervisorOverrideModal
+        isOpen={isSupervisorModalOpen}
+        onClose={() => setIsSupervisorModalOpen(false)}
+        onSuccess={(supervisorName) => {
+          setIsSupervisorModalOpen(false);
+          if (supervisorCallback) {
+            supervisorCallback();
+          }
+        }}
+        actionDescription={supervisorActionDesc}
       />
 
       </div>
