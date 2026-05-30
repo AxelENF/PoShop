@@ -10,6 +10,8 @@ interface ThemeContextType {
   setActiveBranch: (branch: string) => void;
   adminPin: string;
   setAdminPin: (pin: string) => void;
+  isSidebarCollapsed: boolean;
+  setIsSidebarCollapsed: (collapsed: boolean) => void;
 }
 
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
@@ -17,6 +19,7 @@ const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const [activeBranch, setActiveBranch] = useState('Sucursal Matriz');
   const [adminPin, setAdminPin] = useState('9999');
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -30,6 +33,9 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
 
       const savedPin = window.localStorage.getItem('snapgad_admin_pin');
       if (savedPin) setAdminPin(savedPin);
+
+      const savedCollapsed = window.localStorage.getItem('snapgad_sidebar_collapsed');
+      if (savedCollapsed) setIsSidebarCollapsed(savedCollapsed === 'true');
     }
   }, []);
 
@@ -47,8 +53,23 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const handleSetCollapsed = (collapsed: boolean) => {
+    setIsSidebarCollapsed(collapsed);
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem('snapgad_sidebar_collapsed', String(collapsed));
+    }
+  };
+
   return (
-    <ThemeContext.Provider value={{ theme: 'light', activeBranch, setActiveBranch: handleSetBranch, adminPin, setAdminPin: handleSetPin }}>
+    <ThemeContext.Provider value={{ 
+      theme: 'light', 
+      activeBranch, 
+      setActiveBranch: handleSetBranch, 
+      adminPin, 
+      setAdminPin: handleSetPin,
+      isSidebarCollapsed,
+      setIsSidebarCollapsed: handleSetCollapsed
+    }}>
       {children}
     </ThemeContext.Provider>
   );
